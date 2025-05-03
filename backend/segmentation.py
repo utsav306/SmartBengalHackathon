@@ -8,7 +8,7 @@ from google import genai
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 # Initialize the GenAI client
-client = genai.Client(api_key="AIzaSyCkXOZtI3aLb0y7jAejWX7iDoMFpjAHx2g")  # 9🔁 Replace with your actual API key
+client = genai.Client(api_key="")  # 9🔁 Replace with your actual API key
 
 def extract_text_from_image(image_path):
     if not os.path.exists(image_path):
