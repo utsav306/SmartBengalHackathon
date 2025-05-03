@@ -6,7 +6,7 @@ import time
 import re
 
 # Initialize the Gemini API client
-client = genai.Client(api_key="AIzaSyDZ7FcRos1l9R5K66MCXreueB_epGt67mM")
+client = genai.Client(api_key="")  ##Your API key here.
 
 def analyze_websites_with_gemini(websites, category="e-commerce"):
     """

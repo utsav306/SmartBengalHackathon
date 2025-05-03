@@ -42,6 +42,14 @@ const AnalyzeSection = () => {
   const handleSubmit = async (websites, category) => {
     setLoading(true);
     setError(null);
+
+    //handling duplicate website entries
+    const uniqueWebsites = [...new Set(websites.map(website => website.url))];
+    if (uniqueWebsites.length !== websites.length) {
+      setError('Please provide unique URLs for each website');
+      setLoading(false);
+      return;
+    }
     
     try {
       const response = await fetch('http://localhost:5000/compare_websites', {

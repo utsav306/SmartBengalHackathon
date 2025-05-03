@@ -50,19 +50,23 @@ def capture_sections_and_fullpage(page, url, website_name):
         page.wait_for_timeout(3000)
 
         selectors = {
-            "header": [
-                'header', 'nav', 'div[role="banner"]', '.header', '.navbar', '#header',
-                '#nav-main', '#navbar', '.top-bar', '.main-header', '.global-header',
-                'div[data-role="header"]', '.site-header', 'div[class*="header"]',
-                'div[class*="navbar"]', 'div[class*="top"]'
-            ],
-            "footer": [
-                'footer', '.footer', '#footer', '#navFooter', '.site-footer', '.bottom-bar',
-                'div[role="contentinfo"]', '.main-footer', '.global-footer',
-                '.footer-wrapper', 'div[class*="footer"]', 'div[class*="bottom"]',
-                'div[data-role="footer"]', '.site-info'
-            ]
-        }
+    "header": [
+        'header', 'nav', 'div[role="banner"]', '.header', '.navbar', '#header',
+        '#nav-main', '#navbar', '.top-bar', '.main-header', '.global-header',
+        'div[data-role="header"]', '.site-header', 'div[class*="header"]',
+        'div[class*="navbar"]', 'div[class*="top"]', '#masthead', '.page-header',
+        '#site-header', '#main-header', '.app-header', '.layout-header', '#branding',
+        'ytd-masthead', 'ytd-app > #masthead-container'
+    ],
+    "footer": [
+        'footer', '.footer', '#footer', '#navFooter', '.site-footer', '.bottom-bar',
+        'div[role="contentinfo"]', '.main-footer', '.global-footer', '.footer-wrapper',
+        'div[class*="footer"]', 'div[class*="bottom"]', 'div[data-role="footer"]',
+        '.site-info', '#colophon', '#page-footer', '.app-footer', '.layout-footer',
+        'ytd-footer', 'ytd-app > #footer'
+    ]
+}
+
 
         header = next((page.query_selector(sel) for sel in selectors["header"] if page.query_selector(sel)), None)
         footer = next((page.query_selector(sel) for sel in selectors["footer"] if page.query_selector(sel)), None)
