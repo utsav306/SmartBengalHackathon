@@ -350,7 +350,7 @@ const VisionImprovementsPage = () => {
                           <div className="flex items-center">
                             <span className="text-sm text-gray-400 mr-2">Visual Score:</span>
                             <span className="text-lg font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-fuchsia-400">
-                              {websiteData.websites[activeWebsite].score}/100
+                              {websiteData.websites[activeWebsite].score * 10}/100
                             </span>
                           </div>
                         </div>

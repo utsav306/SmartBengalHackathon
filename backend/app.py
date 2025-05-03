@@ -16,6 +16,7 @@ def compare_websites_api():
             return jsonify({"error": "No data provided"}), 400
 
         print(f"Received data: {data}")
+        print(f"Received data type: {data['category']}")
         websites = data.get('websites', [])
         category = data.get('category', 'ecommerce')
 

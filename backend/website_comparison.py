@@ -295,8 +295,8 @@ def combine_scores(clip_scores, gemini_scores):
                 gemini_score = gemini_scores[name][section_type].get("score", 0)
                 gemini_details = gemini_scores[name][section_type].get("details", {})
             
-            # Combine scores (equal weighting for now)
-            combined_score = (clip_score + gemini_score) / 2 if gemini_score > 0 else clip_score
+            # Combine scores
+            combined_score = (0.4*clip_score + 0.6*gemini_score) if gemini_score > 0 else clip_score
             
             # Print the scores for this section and website
             print(f"  {name}:")
