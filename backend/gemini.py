@@ -7,7 +7,7 @@ import re
 import requests
 
 # Initialize the Gemini API client
-api_key = ""
+api_key = "AIzaSyDZ7FcRos1l9R5K66MCXreueB_epGt67mM"
 if not api_key:
     print("Warning: GOOGLE_API_KEY environment variable not set")
 
