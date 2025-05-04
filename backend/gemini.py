@@ -4,9 +4,20 @@ import json
 import os
 import time
 import re
+import requests
 
 # Initialize the Gemini API client
-client = genai.Client(api_key="")  ##Your API key here.
+api_key = ""
+if not api_key:
+    print("Warning: GOOGLE_API_KEY environment variable not set")
+
+try:
+    # Initialize the Gemini client with the API key
+    client = genai.Client(api_key=api_key)
+    print("Successfully initialized Gemini API client")
+except Exception as e:
+    print(f"Error initializing Gemini API client: {str(e)}")
+    client = None
 
 def analyze_websites_with_gemini(websites, category="e-commerce"):
     """
@@ -14,7 +25,7 @@ def analyze_websites_with_gemini(websites, category="e-commerce"):
     Takes full page screenshots and analyzes different sections in a single API call.
     
     Args:
-        websites: List of dictionaries containing website names and their full screenshot paths
+        websites: List of dictionaries containing website names and their full screenshot paths or URLs
         category: Website category (default: "e-commerce")
         
     Returns:
@@ -22,104 +33,94 @@ def analyze_websites_with_gemini(websites, category="e-commerce"):
     """
     results = {}
     
+    # Check if Gemini client is initialized
+    if client is None:
+        print("Gemini API client not initialized. Skipping Gemini analysis.")
+        return {
+            "error": "Gemini API client not initialized",
+            "websites": [{
+                "name": website.get("name", "Unknown"),
+                "url": website.get("url", ""),
+                "overall_score": 7,  # Default score
+                "screenshot": website.get("full_cloudinary_url", website.get("full_path", ""))
+            } for website in websites]
+        }
+    
     print("Starting website analysis...")
     
-    # Collect full screenshots for all websites
-    uploaded_files = []
+    # Collect screenshots for all websites
+    image_parts = []
     website_names = []
     website_urls = []
+    contents = []
+    
+    # First part of the prompt is text
+    contents.append(f"Compare the following {category} websites and provide detailed analysis.")
     
     for website in websites:
         name = website["name"]
-        full_image_path = website["full_path"]
         url = website.get("url", f"https://{name.lower()}.com")
         
         print(f"Processing {name}...")
         
-        # Check if file exists
-        if not os.path.exists(full_image_path):
-            print(f"Warning: Image file {full_image_path} not found for {name}")
-            continue
+        # Check if we have a Cloudinary URL
+        if "full_cloudinary_url" in website:
+            image_url = website["full_cloudinary_url"]
+            print(f"Using Cloudinary URL for {name}: {image_url}")
             
-        # Upload the full screenshot
-        print(f"Uploading {name} screenshot...")
-        uploaded_file = client.files.upload(file=full_image_path)
-        uploaded_files.append(uploaded_file)
-        website_names.append(name)
-        website_urls.append(url)
-        print(f"Successfully uploaded {name} screenshot")
+            try:
+                # Download image from Cloudinary URL
+                print(f"Downloading image from Cloudinary for {name}...")
+                response = requests.get(image_url)
+                if response.status_code == 200:
+                    image_bytes = response.content
+                    # Add image directly to contents list like in check.py
+                    contents.append(types.Part.from_bytes(data=image_bytes, mime_type="image/png"))
+                    website_names.append(name)
+                    website_urls.append(url)
+                    print(f"Successfully downloaded {name} screenshot from Cloudinary")
+                else:
+                    print(f"Failed to download image from Cloudinary for {name}: HTTP {response.status_code}")
+                    continue
+            except Exception as e:
+                print(f"Error downloading image from Cloudinary for {name}: {str(e)}")
+                continue
+                
+        # Fallback to local file path if Cloudinary URL is not available
+        elif "full_path" in website:
+            full_image_path = website["full_path"]
+            
+            # Check if file exists
+            if not os.path.exists(full_image_path):
+                print(f"Warning: Image file {full_image_path} not found for {name}")
+                continue
+                
+            try:
+                # Read image file and create Part object
+                print(f"Reading local image file for {name}...")
+                with open(full_image_path, "rb") as f:
+                    image_bytes = f.read()
+                # Add image directly to contents list like in check.py
+                contents.append(types.Part.from_bytes(data=image_bytes, mime_type="image/png"))
+                website_names.append(name)
+                website_urls.append(url)
+                print(f"Successfully read {name} screenshot from local file")
+            except Exception as e:
+                print(f"Error reading local image file for {name}: {str(e)}")
+                continue
+        else:
+            print(f"Warning: No image source found for {name}")
+            continue
     
     # Check if any website images were found
     if not website_names:
-        return {"error": "No valid website images found. Please check the paths."}
+        return {"error": "No valid website images found. Please check the paths or URLs."}
     
-    print(f"Successfully uploaded {len(website_names)} website screenshots: {', '.join(website_names)}")
+    print(f"Successfully processed {len(website_names)} website screenshots: {', '.join(website_names)}")
     
-    # Create prompt for comparing websites with section-by-section analysis
-    section_types = ["header", "main content", "footer"]
-    
-    # Create website template for the JSON format
-    website_templates = []
-    for i, name in enumerate(website_names):
-        website_templates.append(f"""
-            {{
-                "name": "{name}",
-                "url": "{website_urls[i]}",
-                "overall_score": <score from 1-10>,
-                "sections": {{
-                    "header": {{
-                        "score": <score from 1-10>,
-                        "strengths": ["<strength1>", "<strength2>", ...],
-                        "weaknesses": ["<weakness1>", "<weakness2>", ...],
-                        "recommendations": ["<recommendation1>", "<recommendation2>", ...]
-                    }},
-                    "main_content": {{
-                        "score": <score from 1-10>,
-                        "strengths": ["<strength1>", "<strength2>", ...],
-                        "weaknesses": ["<weakness1>", "<weakness2>", ...],
-                        "recommendations": ["<recommendation1>", "<recommendation2>", ...]
-                    }},
-                    "footer": {{
-                        "score": <score from 1-10>,
-                        "strengths": ["<strength1>", "<strength2>", ...],
-                        "weaknesses": ["<weakness1>", "<weakness2>", ...],
-                        "recommendations": ["<recommendation1>", "<recommendation2>", ...]
-                    }}
-                }},
-                "vision_improvements": {{
-                    "color_scheme": {{
-                        "current_analysis": "<analysis of current color scheme>",
-                        "recommendations": ["<specific color improvement1>", "<specific color improvement2>", ...]
-                    }},
-                    "typography": {{
-                        "current_analysis": "<analysis of current typography>",
-                        "recommendations": ["<specific typography improvement1>", "<specific typography improvement2>", ...]
-                    }},
-                    "layout": {{
-                        "current_analysis": "<analysis of current layout>",
-                        "recommendations": ["<specific layout improvement1>", "<specific layout improvement2>", ...]
-                    }},
-                    "visual_hierarchy": {{
-                        "current_analysis": "<analysis of current visual hierarchy>",
-                        "recommendations": ["<specific visual hierarchy improvement1>", "<specific visual hierarchy improvement2>", ...]
-                    }},
-                    "whitespace": {{
-                        "current_analysis": "<analysis of current use of whitespace>",
-                        "recommendations": ["<specific whitespace improvement1>", "<specific whitespace improvement2>", ...]
-                    }},
-                    "responsive_design": {{
-                        "current_analysis": "<analysis of current responsive design>",
-                        "recommendations": ["<specific responsive design improvement1>", "<specific responsive design improvement2>", ...]
-                    }},
-                    "accessibility": {{
-                        "current_analysis": "<analysis of current accessibility>",
-                        "recommendations": ["<specific accessibility improvement1>", "<specific accessibility improvement2>", ...]
-                    }}
-                }}
-            }}""")
-    
-    prompt = f"""
-    Compare the following {len(website_names)} {category} websites: {', '.join(website_names)}.
+    # Add detailed instructions to the contents list
+    analysis_prompt = f"""
+    For the {len(website_names)} {category} websites shown in the images ({', '.join(website_names)}), provide a detailed analysis.
     
     For each website, evaluate these key sections:
     1. Header section
@@ -143,40 +144,84 @@ def analyze_websites_with_gemini(websites, category="e-commerce"):
     
     Also provide an overall score from 1-10 for each website.
     
-    Return your response in the following JSON format:
+    Return your response in JSON format with the following structure for each website:
     {{
         "websites": [
-            {','.join(website_templates)}
-        ],
-        "comparison": {{
-            "best_overall": "<website name>",
-            "best_header": "<website name>",
-            "best_main_content": "<website name>",
-            "best_footer": "<website name>",
-            "summary": "<brief comparison summary>"
-        }}
+            {{
+                "name": "[website name]",
+                "url": "[website url]",
+                "overall_score": [score from 1-10],
+                "sections": {{
+                    "header": {{
+                        "score": [score from 1-10],
+                        "strengths": ["strength1", "strength2", ...],
+                        "weaknesses": ["weakness1", "weakness2", ...],
+                        "recommendations": ["recommendation1", "recommendation2", ...]
+                    }},
+                    "main_content": {{
+                        "score": [score from 1-10],
+                        "strengths": ["strength1", "strength2", ...],
+                        "weaknesses": ["weakness1", "weakness2", ...],
+                        "recommendations": ["recommendation1", "recommendation2", ...]
+                    }},
+                    "footer": {{
+                        "score": [score from 1-10],
+                        "strengths": ["strength1", "strength2", ...],
+                        "weaknesses": ["weakness1", "weakness2", ...],
+                        "recommendations": ["recommendation1", "recommendation2", ...]
+                    }}
+                }},
+                "vision_improvements": {{
+                    "color_scheme": {{
+                        "current_analysis": "analysis of current color scheme",
+                        "recommendations": ["specific color improvement1", "specific color improvement2", ...]
+                    }},
+                    "typography": {{
+                        "current_analysis": "analysis of current typography",
+                        "recommendations": ["specific typography improvement1", "specific typography improvement2", ...]
+                    }},
+                    "layout": {{
+                        "current_analysis": "analysis of current layout",
+                        "recommendations": ["specific layout improvement1", "specific layout improvement2", ...]
+                    }},
+                    "visual_hierarchy": {{
+                        "current_analysis": "analysis of current visual hierarchy",
+                        "recommendations": ["specific visual hierarchy improvement1", "specific visual hierarchy improvement2", ...]
+                    }},
+                    "whitespace": {{
+                        "current_analysis": "analysis of current use of whitespace",
+                        "recommendations": ["specific whitespace improvement1", "specific whitespace improvement2", ...]
+                    }},
+                    "responsive_design": {{
+                        "current_analysis": "analysis of current responsive design",
+                        "recommendations": ["specific responsive design improvement1", "specific responsive design improvement2", ...]
+                    }},
+                    "accessibility": {{
+                        "current_analysis": "analysis of current accessibility",
+                        "recommendations": ["specific accessibility improvement1", "specific accessibility improvement2", ...]
+                    }}
+                }}
+            }},
+            ...
+        ]
     }}
-    
-    Provide only the JSON with no other text.
     """
     
-    # Prepare contents for API call
-    contents = [prompt]
-    for file in uploaded_files:
-        contents.append(file)
+    # Replace the first element with the detailed prompt
+    contents[0] = analysis_prompt
     
-    # Call Gemini API
-    print("Calling Gemini API to analyze websites (this may take a while)...")
-    start_time = time.time()
-    
+    # Prepare the Gemini API request
     try:
+        print("Sending request to Gemini API...")
+        
+        # Make the API request using the contents list directly, just like in check.py
         response = client.models.generate_content(
             model="gemini-2.0-flash",
             contents=contents
         )
         
-        elapsed_time = time.time() - start_time
-        print(f"Gemini API response received in {elapsed_time:.2f} seconds")
+        print(f"Gemini API response received successfully")
+        # No need to calculate elapsed time as it's not being used elsewhere
         
         # Extract JSON from the response
         response_text = response.text
@@ -198,9 +243,13 @@ def analyze_websites_with_gemini(websites, category="e-commerce"):
             # Process the results to add screenshot paths
             if "websites" in results:
                 for i, website in enumerate(results["websites"]):
-                    # Add screenshot path if not present
+                    # Add screenshot URL if not present
                     if "screenshot" not in website:
-                        website["screenshot"] = websites[i]["full_path"]
+                        # Use Cloudinary URL if available, otherwise use local path
+                        if "full_cloudinary_url" in websites[i]:
+                            website["screenshot"] = websites[i]["full_cloudinary_url"]
+                        elif "full_path" in websites[i]:
+                            website["screenshot"] = websites[i]["full_path"]
             
         except json.JSONDecodeError as e:
             print(f"Error parsing JSON: {str(e)}")

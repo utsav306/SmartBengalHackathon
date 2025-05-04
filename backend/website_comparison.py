@@ -13,6 +13,10 @@ from prettytable import PrettyTable
 # Add local imports
 sys.path.append(str(Path(__file__).parent))
 from gemini import analyze_websites_with_gemini
+from cloudinary_storage import init_cloudinary, upload_image, upload_website_screenshots
+
+# Initialize Cloudinary if environment variables are set
+init_cloudinary()
 
 # Load CLIP model and processor
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -32,13 +36,28 @@ def get_clip_prompt(section_type, category):
 
 # --- OpenCV Preprocessing ---
 def preprocess_image(image_path):
-    image = cv2.imread(image_path)
-    enhanced_image = cv2.equalizeHist(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY))
-    resized_image = cv2.resize(enhanced_image, (1280, 720))
-    final_image = cv2.cvtColor(resized_image, cv2.COLOR_GRAY2BGR)
-    processed_image_path = image_path.replace(".png", "_processed.png")
-    cv2.imwrite(processed_image_path, final_image)
-    return processed_image_path
+    try:
+        # Read the image
+        image = cv2.imread(image_path)
+        if image is None:
+            print(f"Failed to read image from {image_path}")
+            return None
+            
+        # Process the image
+        enhanced_image = cv2.equalizeHist(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY))
+        resized_image = cv2.resize(enhanced_image, (1280, 720))
+        final_image = cv2.cvtColor(resized_image, cv2.COLOR_GRAY2BGR)
+        
+        # Create processed image path
+        processed_image_path = image_path.replace(".png", "_processed.png")
+        
+        # Write the processed image
+        cv2.imwrite(processed_image_path, final_image)
+        
+        return processed_image_path
+    except Exception as e:
+        print(f"Error preprocessing image {image_path}: {str(e)}")
+        return None
 
 # --- Screenshot sections ---
 def capture_sections_and_fullpage(page, url, website_name):
@@ -110,49 +129,150 @@ def capture_sections_and_fullpage(page, url, website_name):
 
         footer.screenshot(path=footer_path)
 
-        return {"header": header_path, "main": main_path, "footer": footer_path, "full": full_page_path}
+        # Store local paths for processing
+        local_paths = {"header": header_path, "main": main_path, "footer": footer_path, "full": full_page_path}
+        
+        # Upload screenshots to Cloudinary
+        cloudinary_urls = {}
+        cloudinary_folder = f"website_screenshots/{website_name}"
+        
+        # Create a copy of the sections to avoid modifying during iteration
+        sections_to_upload = {k: v for k, v in local_paths.items() if k in ["header", "main", "footer", "full"]}
+        
+        # Upload each section to Cloudinary
+        for section, path in sections_to_upload.items():
+            if path and os.path.exists(path):
+                public_id = f"{website_name}_{section}"
+                result = upload_image(path, public_id=public_id, folder=cloudinary_folder)
+                
+                if "error" not in result:
+                    # Store the Cloudinary URL
+                    cloudinary_urls[section] = result["url"]
+                    # Add the Cloudinary URL to the local paths dictionary
+                    local_paths[f"{section}_cloudinary_url"] = result["url"]
+                else:
+                    print(f"⚠️ Failed to upload {section} screenshot to Cloudinary: {result['error']}")
+        
+        return local_paths
 
     except Exception as e:
         print(f"❌ Error processing {website_name}: {e}")
         return None
 
 # --- CLIP-based scoring ---
-@torch.no_grad()
-def score_section(image_path, section_type, category):
+def score_section(image_path, section_type, category, cloudinary_url=None):
     prompt = get_clip_prompt(section_type, category)
-    processed_image_path = preprocess_image(image_path)
+    processed_image_path = None
     
-    image = Image.open(processed_image_path).convert("RGB")
-    inputs = clip_processor(text=[prompt], images=image, return_tensors="pt", padding=True).to(device)
-
-    outputs = clip_model(**inputs)
-    image_embed = outputs.image_embeds
-    text_embed = outputs.text_embeds
-
-    image_embed = image_embed / image_embed.norm(p=2, dim=-1, keepdim=True)
-    text_embed = text_embed / text_embed.norm(p=2, dim=-1, keepdim=True)
-
-    similarity = cosine_similarity(image_embed, text_embed).item()
-    normalized_similarity = (similarity + 1) / 2  # 0 to 1
-
-    clarity_score = min(1.0, normalized_similarity + 0.1)
-    modernity_score = min(1.0, normalized_similarity + 0.05)
-    relevance_score = normalized_similarity
-    consistency_score = min(1.0, normalized_similarity + 0.07)
-    visual_appeal_score = min(1.0, normalized_similarity + 0.08)
-
-    criteria_scores = {
-        "Clarity": round(clarity_score, 2),
-        "Modernity": round(modernity_score, 2),
-        "Relevance": round(relevance_score, 2),
-        "Consistency": round(consistency_score, 2),
-        "Visual Appeal": round(visual_appeal_score, 2),
+    # Default scores in case of failure
+    default_result = {
+        "clip_score": 0.5,  # Default score
+        "criteria_scores": {
+            "Clarity": 0.5,
+            "Modernity": 0.5,
+            "Relevance": 0.5,
+            "Consistency": 0.5,
+            "Visual Appeal": 0.5,
+        }
     }
-
-    return {
-        "clip_score": normalized_similarity,
-        "criteria_scores": criteria_scores
-    }
+    
+    # First try Cloudinary URL if available
+    if cloudinary_url:
+        try:
+            # Download image from Cloudinary URL
+            import requests
+            import tempfile
+            
+            print(f"Downloading image from Cloudinary URL: {cloudinary_url}")
+            response = requests.get(cloudinary_url)
+            if response.status_code == 200:
+                # Save the image to a temporary file
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
+                    temp_file.write(response.content)
+                    temp_path = temp_file.name
+                
+                # Process the image
+                processed_image_path = preprocess_image(temp_path)
+                if not processed_image_path:
+                    print("Failed to process Cloudinary image, falling back to local file")
+                    processed_image_path = None
+                else:
+                    print(f"Successfully processed Cloudinary image to {processed_image_path}")
+                
+                # Clean up the temporary file if processing succeeded
+                try:
+                    os.remove(temp_path)
+                except Exception as e:
+                    print(f"Warning: Could not remove temp file: {str(e)}")
+            else:
+                print(f"Failed to download image from Cloudinary: HTTP {response.status_code}")
+                processed_image_path = None
+        except Exception as e:
+            print(f"Error downloading image from Cloudinary: {str(e)}")
+            processed_image_path = None
+    
+    # If Cloudinary failed or not available, try local file
+    if not processed_image_path and image_path and os.path.exists(image_path):
+        print(f"Using local file: {image_path}")
+        processed_image_path = preprocess_image(image_path)
+        if not processed_image_path:
+            print(f"Failed to process local image: {image_path}")
+            return default_result
+    elif not processed_image_path:
+        print(f"No valid image source available. Cloudinary URL: {cloudinary_url}, Local path: {image_path}")
+        return default_result
+    
+    # Ensure the processed image exists
+    if not os.path.exists(processed_image_path):
+        print(f"Processed image not found: {processed_image_path}")
+        return default_result
+    
+    try:
+        # Process the image with CLIP
+        image = Image.open(processed_image_path).convert("RGB")
+        
+        # Use torch.no_grad() to save memory during inference
+        with torch.no_grad():
+            inputs = clip_processor(text=[prompt], images=image, return_tensors="pt", padding=True).to(device)
+            
+            outputs = clip_model(**inputs)
+            image_embed = outputs.image_embeds
+            text_embed = outputs.text_embeds
+            
+            image_embed = image_embed / image_embed.norm(p=2, dim=-1, keepdim=True)
+            text_embed = text_embed / text_embed.norm(p=2, dim=-1, keepdim=True)
+            
+            similarity = cosine_similarity(image_embed, text_embed).item()
+            normalized_similarity = (similarity + 1) / 2  # 0 to 1
+        
+        # Calculate criteria scores
+        clarity_score = min(1.0, normalized_similarity + 0.1)
+        modernity_score = min(1.0, normalized_similarity + 0.05)
+        relevance_score = normalized_similarity
+        consistency_score = min(1.0, normalized_similarity + 0.07)
+        visual_appeal_score = min(1.0, normalized_similarity + 0.08)
+        
+        criteria_scores = {
+            "Clarity": round(clarity_score, 2),
+            "Modernity": round(modernity_score, 2),
+            "Relevance": round(relevance_score, 2),
+            "Consistency": round(consistency_score, 2),
+            "Visual Appeal": round(visual_appeal_score, 2),
+        }
+        
+        # Clean up processed image file
+        try:
+            os.remove(processed_image_path)
+        except Exception as e:
+            print(f"Warning: Could not remove processed image file: {str(e)}")
+        
+        return {
+            "clip_score": normalized_similarity,
+            "criteria_scores": criteria_scores
+        }
+    except Exception as e:
+        print(f"Error processing image with CLIP: {str(e)}")
+        return default_result
 
 # --- Get Gemini scores ---
 def get_gemini_scores(website_data, category):
@@ -170,12 +290,25 @@ def get_gemini_scores(website_data, category):
     gemini_input = []
     for site in website_data:
         # Use the full page screenshot
-        full_path = site.get("sections", {}).get("full")
+        sections = site.get("sections", {})
+        full_path = sections.get("full")
+        
         if full_path:
-            gemini_input.append({
-                "name": site["name"],
-                "full_path": full_path
-            })
+            # Check if we have a Cloudinary URL
+            cloudinary_url = sections.get("full_cloudinary_url")
+            
+            if cloudinary_url:
+                gemini_input.append({
+                    "name": site["name"],
+                    "url": site.get("url", ""),
+                    "full_cloudinary_url": cloudinary_url
+                })
+            else:
+                gemini_input.append({
+                    "name": site["name"],
+                    "url": site.get("url", ""),
+                    "full_path": full_path
+                })
     
     # If no screenshots are available, return empty scores
     if not gemini_input:
@@ -453,15 +586,26 @@ def compare_websites_combined(websites, category):
         
         for section_type in ["header", "main", "footer", "full"]:
             image_path = sections.get(section_type)
+            cloudinary_url = sections.get(f"{section_type}_cloudinary_url")
+            
             if image_path:
-                result = score_section(image_path, section_type, category)
+                # Pass both the local path and Cloudinary URL (if available)
+                result = score_section(image_path, section_type, category, cloudinary_url=cloudinary_url)
                 print(f"{name} {section_type.upper()}: CLIP Score = {result['clip_score']:.3f}")
-                clip_scores[section_type].append({
+                
+                # Create entry with both local path and Cloudinary URL
+                entry = {
                     "name": name,
                     "path": image_path,
                     "score": result["clip_score"],
                     "criteria": result["criteria_scores"]
-                })
+                }
+                
+                # Add Cloudinary URL if available
+                if cloudinary_url:
+                    entry["cloudinary_url"] = cloudinary_url
+                    
+                clip_scores[section_type].append(entry)
     
     # Get Gemini scores
     print("\n--- Getting Gemini Scores ---")
@@ -526,15 +670,26 @@ def compare_websites(websites, category):
 
         for section_type in ["header", "main", "footer", "full"]:
             image_path = sections.get(section_type)
+            cloudinary_url = sections.get(f"{section_type}_cloudinary_url")
+            
             if image_path:
-                result = score_section(image_path, section_type, category)
+                # Pass both the local path and Cloudinary URL (if available)
+                result = score_section(image_path, section_type, category, cloudinary_url=cloudinary_url)
                 print(f"{name} {section_type}: CLIP Score = {result['clip_score']:.3f}")
-                all_scores[section_type].append({
+                
+                # Create entry with both local path and Cloudinary URL
+                entry = {
                     "name": name,
                     "path": image_path,
                     "score": result["clip_score"],
                     "criteria": result["criteria_scores"]
-                })
+                }
+                
+                # Add Cloudinary URL if available
+                if cloudinary_url:
+                    entry["cloudinary_url"] = cloudinary_url
+                    
+                all_scores[section_type].append(entry)
 
     # Now get Gemini scores for full-page analysis of sections
     print("\nGetting Gemini scores...")

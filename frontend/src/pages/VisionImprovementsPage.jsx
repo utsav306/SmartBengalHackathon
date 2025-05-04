@@ -3,6 +3,9 @@ import Header from '../components/Header';
 import Footer from '../components/Footer';
 import axios from 'axios';
 
+// Define API base URL
+const API_BASE_URL = 'http://localhost:5000';
+
 const VisionImprovementsPage = () => {
   const [activeWebsite, setActiveWebsite] = useState(0);
   const [websiteData, setWebsiteData] = useState(null);
@@ -96,7 +99,7 @@ const VisionImprovementsPage = () => {
         ];
         
         // Make API request to your backend
-        const response = await axios.post('http://localhost:5000/compare_websites', {
+        const response = await axios.post(`${API_BASE_URL}/compare_websites`, {
           websites: websites,
           category: 'e-commerce'
         });
@@ -359,9 +362,26 @@ const VisionImprovementsPage = () => {
                       <div className="p-4">
                         <div className="relative rounded-lg overflow-hidden border border-gray-700">
                           <img 
-                            src={`http://localhost:5000/screenshots/${websiteData.websites[activeWebsite].name.toLowerCase().replace(/\s+/g, '_')}/${websiteData.websites[activeWebsite].name.toLowerCase().replace(/\s+/g, '_')}_full.png`} 
+                            src={websiteData.websites[activeWebsite].cloudinary_url ? 
+                                 websiteData.websites[activeWebsite].cloudinary_url : 
+                                 `${API_BASE_URL}/screenshots/${websiteData.websites[activeWebsite].name.toLowerCase().replace(/\s+/g, '_')}/${websiteData.websites[activeWebsite].name.toLowerCase().replace(/\s+/g, '_')}_full.png`} 
                             alt={`${websiteData.websites[activeWebsite].name} screenshot`}
                             className="w-full h-auto"
+                            onError={(e) => {
+                              e.target.onerror = null;
+                              // Try different sources in order of preference
+                              if (websiteData.websites[activeWebsite].cloudinary_url && 
+                                  e.target.src === websiteData.websites[activeWebsite].cloudinary_url) {
+                                // If Cloudinary URL failed, try local path
+                                e.target.src = `${API_BASE_URL}/screenshots/${websiteData.websites[activeWebsite].name.toLowerCase().replace(/\s+/g, '_')}/${websiteData.websites[activeWebsite].name.toLowerCase().replace(/\s+/g, '_')}_full.png`;
+                              } else if (websiteData.websites[activeWebsite].screenshot) {
+                                // If local path failed, try the screenshot URL if available
+                                e.target.src = websiteData.websites[activeWebsite].screenshot;
+                              } else {
+                                // Last resort: placeholder
+                                e.target.src = "/placeholder-image.png";
+                              }
+                            }}
                           />
                           
                           {/* Annotation overlay - in a real app, these would be positioned based on actual issues */}
@@ -430,8 +450,8 @@ const VisionImprovementsPage = () => {
                                     <div className="mt-2 pt-2 border-t border-gray-700">
                                       <h4 className="text-xs font-medium text-gray-400 mb-1">Additional recommendations:</h4>
                                       <ul className="text-xs text-gray-400 list-disc list-inside">
-                                        {improvement.allRecommendations.slice(1, 3).map((rec, i) => (
-                                          <li key={i} className="my-1">{rec}</li>
+                                        {improvement.allRecommendations.slice(1).map((recommendation, i) => (
+                                          <li key={i} className="my-1">{recommendation}</li>
                                         ))}
                                       </ul>
                                     </div>
