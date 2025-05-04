@@ -69,6 +69,13 @@ const AnalyzeSection = () => {
 
       const data = await response.json();
       
+      // Debug the response data
+      console.log('API Response Data:', data);
+      console.log('Header section data:', data.header);
+      console.log('Main section data:', data.main);
+      console.log('Footer section data:', data.footer);
+      console.log('Full section data:', data.full);
+      
       // Get the current session ID
       const sessionId = sessionStorage.getItem('sessionId');
       

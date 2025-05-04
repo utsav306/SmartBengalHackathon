@@ -1,9 +1,6 @@
 import os
-import torch
 import cv2
 from PIL import Image
-from transformers import CLIPProcessor, CLIPModel
-from torch.nn.functional import cosine_similarity
 from playwright.sync_api import sync_playwright
 import json
 import sys
@@ -18,21 +15,28 @@ from cloudinary_storage import init_cloudinary, upload_image, upload_website_scr
 # Initialize Cloudinary if environment variables are set
 init_cloudinary()
 
-# Load CLIP model and processor
-device = "cuda" if torch.cuda.is_available() else "cpu"
-clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
-clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
-clip_model.eval()
+# No section-specific scoring prompts needed as we're using only Gemini
 
-# --- Section-specific scoring prompts ---
-def get_clip_prompt(section_type, category):
-    prompts = {
-        "header": f"Evaluate the {section_type} section of a {category} website based on visual appeal, creativity, and branding consistency.",
-        "main": f"Evaluate the {section_type} section of a {category} website based on design clarity, layout, and visual hierarchy.",
-        "footer": f"Evaluate the {section_type} section of a {category} website based on information completeness and accessibility.",
-        "full": f"Evaluate the entire {category} website homepage for overall design quality, user experience, and branding consistency."
-    }
-    return prompts.get(section_type, f"Evaluate the {section_type} section of a {category} website.")
+# Helper function to ensure consistent response structure for the frontend
+def ensure_frontend_compatibility(scores):
+    """
+    Ensure the response structure is compatible with the frontend expectations.
+    The frontend expects each section to have entries with name, score, and criteria.
+    """
+    for section_type in ["header", "main", "footer", "full"]:
+        if section_type in scores:
+            for entry in scores[section_type]:
+                # Ensure criteria exists
+                if "criteria" not in entry:
+                    score_value = entry.get("score", 0.5)
+                    entry["criteria"] = {
+                        "Clarity": score_value,
+                        "Modernity": score_value,
+                        "Relevance": score_value,
+                        "Consistency": score_value,
+                        "Visual Appeal": score_value
+                    }
+    return scores
 
 # --- OpenCV Preprocessing ---
 def preprocess_image(image_path):
@@ -158,121 +162,6 @@ def capture_sections_and_fullpage(page, url, website_name):
     except Exception as e:
         print(f"❌ Error processing {website_name}: {e}")
         return None
-
-# --- CLIP-based scoring ---
-def score_section(image_path, section_type, category, cloudinary_url=None):
-    prompt = get_clip_prompt(section_type, category)
-    processed_image_path = None
-    
-    # Default scores in case of failure
-    default_result = {
-        "clip_score": 0.5,  # Default score
-        "criteria_scores": {
-            "Clarity": 0.5,
-            "Modernity": 0.5,
-            "Relevance": 0.5,
-            "Consistency": 0.5,
-            "Visual Appeal": 0.5,
-        }
-    }
-    
-    # First try Cloudinary URL if available
-    if cloudinary_url:
-        try:
-            # Download image from Cloudinary URL
-            import requests
-            import tempfile
-            
-            print(f"Downloading image from Cloudinary URL: {cloudinary_url}")
-            response = requests.get(cloudinary_url)
-            if response.status_code == 200:
-                # Save the image to a temporary file
-                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
-                    temp_file.write(response.content)
-                    temp_path = temp_file.name
-                
-                # Process the image
-                processed_image_path = preprocess_image(temp_path)
-                if not processed_image_path:
-                    print("Failed to process Cloudinary image, falling back to local file")
-                    processed_image_path = None
-                else:
-                    print(f"Successfully processed Cloudinary image to {processed_image_path}")
-                
-                # Clean up the temporary file if processing succeeded
-                try:
-                    os.remove(temp_path)
-                except Exception as e:
-                    print(f"Warning: Could not remove temp file: {str(e)}")
-            else:
-                print(f"Failed to download image from Cloudinary: HTTP {response.status_code}")
-                processed_image_path = None
-        except Exception as e:
-            print(f"Error downloading image from Cloudinary: {str(e)}")
-            processed_image_path = None
-    
-    # If Cloudinary failed or not available, try local file
-    if not processed_image_path and image_path and os.path.exists(image_path):
-        print(f"Using local file: {image_path}")
-        processed_image_path = preprocess_image(image_path)
-        if not processed_image_path:
-            print(f"Failed to process local image: {image_path}")
-            return default_result
-    elif not processed_image_path:
-        print(f"No valid image source available. Cloudinary URL: {cloudinary_url}, Local path: {image_path}")
-        return default_result
-    
-    # Ensure the processed image exists
-    if not os.path.exists(processed_image_path):
-        print(f"Processed image not found: {processed_image_path}")
-        return default_result
-    
-    try:
-        # Process the image with CLIP
-        image = Image.open(processed_image_path).convert("RGB")
-        
-        # Use torch.no_grad() to save memory during inference
-        with torch.no_grad():
-            inputs = clip_processor(text=[prompt], images=image, return_tensors="pt", padding=True).to(device)
-            
-            outputs = clip_model(**inputs)
-            image_embed = outputs.image_embeds
-            text_embed = outputs.text_embeds
-            
-            image_embed = image_embed / image_embed.norm(p=2, dim=-1, keepdim=True)
-            text_embed = text_embed / text_embed.norm(p=2, dim=-1, keepdim=True)
-            
-            similarity = cosine_similarity(image_embed, text_embed).item()
-            normalized_similarity = (similarity + 1) / 2  # 0 to 1
-        
-        # Calculate criteria scores
-        clarity_score = min(1.0, normalized_similarity + 0.1)
-        modernity_score = min(1.0, normalized_similarity + 0.05)
-        relevance_score = normalized_similarity
-        consistency_score = min(1.0, normalized_similarity + 0.07)
-        visual_appeal_score = min(1.0, normalized_similarity + 0.08)
-        
-        criteria_scores = {
-            "Clarity": round(clarity_score, 2),
-            "Modernity": round(modernity_score, 2),
-            "Relevance": round(relevance_score, 2),
-            "Consistency": round(consistency_score, 2),
-            "Visual Appeal": round(visual_appeal_score, 2),
-        }
-        
-        # Clean up processed image file
-        try:
-            os.remove(processed_image_path)
-        except Exception as e:
-            print(f"Warning: Could not remove processed image file: {str(e)}")
-        
-        return {
-            "clip_score": normalized_similarity,
-            "criteria_scores": criteria_scores
-        }
-    except Exception as e:
-        print(f"Error processing image with CLIP: {str(e)}")
-        return default_result
 
 # --- Get Gemini scores ---
 def get_gemini_scores(website_data, category):
@@ -402,242 +291,32 @@ def get_gemini_scores(website_data, category):
     
     return gemini_scores
 
-# --- Combine CLIP and Gemini scores ---
-def combine_scores(clip_scores, gemini_scores):
-    """
-    Combine CLIP and Gemini scores into a final comprehensive score.
-    
-    Args:
-        clip_scores: Dictionary with CLIP scores for each website section
-        gemini_scores: Dictionary with Gemini scores for each website section
-        
-    Returns:
-        Dictionary with combined scores
-    """
-    combined_scores = {"header": [], "main": [], "footer": [], "full": []}
-    
-    print("\n=== COMBINED SCORES ===")
-    # Process each section type
-    for section_type in ["header", "main", "footer", "full"]:
-        print(f"\n{section_type.upper()} SECTION:")
-        
-        for clip_entry in clip_scores.get(section_type, []):
-            name = clip_entry.get("name")
-            clip_score = clip_entry.get("score", 0)
-            
-            # Get corresponding Gemini score if available
-            gemini_score = 0
-            gemini_details = {}
-            if name in gemini_scores and section_type in gemini_scores[name]:
-                gemini_score = gemini_scores[name][section_type].get("score", 0)
-                gemini_details = gemini_scores[name][section_type].get("details", {})
-            
-            # Combine scores
-            combined_score = (0.4*clip_score + 0.6*gemini_score) if gemini_score > 0 else clip_score
-            
-            # Print the scores for this section and website
-            print(f"  {name}:")
-            print(f"    CLIP Score:     {clip_score:.3f}")
-            print(f"    Gemini Score:   {gemini_score:.3f}")
-            print(f"    Combined Score: {combined_score:.3f}")
-            
-            # Create combined entry
-            combined_entry = {
-                "name": name,
-                "path": clip_entry.get("path"),
-                "clip_score": clip_score,
-                "gemini_score": gemini_score,
-                "combined_score": combined_score,
-                "criteria": clip_entry.get("criteria", {}),
-                "gemini_details": gemini_details
-            }
-            
-            combined_scores[section_type].append(combined_entry)
-    
-    print("=== END OF COMBINED SCORES ===\n")
-    
-    # Print final summary table
-    print("\n=== FINAL SUMMARY ===")
-    website_scores = {}
-    
-    # Prepare data
-    for section_type in ["header", "main", "footer", "full"]:
-        for entry in combined_scores.get(section_type, []):
-            name = entry.get("name")
-            if name not in website_scores:
-                website_scores[name] = {}
-            website_scores[name][section_type] = entry.get("combined_score", 0)
-    
-    # Print header
-    print(f"{'Website':<10} {'Header':<10} {'Main':<10} {'Footer':<10} {'Overall':<10}")
-    print("-" * 50)
-    
-    # Print each website's scores
-    for name, sections in website_scores.items():
-        header = sections.get("header", 0)
-        main = sections.get("main", 0)
-        footer = sections.get("footer", 0)
-        overall = sections.get("full", 0)
-        
-        print(f"{name:<10} {header:<10.3f} {main:<10.3f} {footer:<10.3f} {overall:<10.3f}")
-    
-    print("=== END OF FINAL SUMMARY ===\n")
-    
-    return combined_scores
-
-# --- Print scores in a table format ---
-def print_scores_table(combined_scores):
-    """
-    Print scores in a formatted table
-    """
-    # First, rearrange the data to be website-centric
-    website_scores = {}
-    
-    for section_type in ["header", "main", "footer", "full"]:
-        for entry in combined_scores.get(section_type, []):
-            name = entry.get("name")
-            
-            if name not in website_scores:
-                website_scores[name] = {}
-            
-            website_scores[name][section_type] = {
-                "clip": entry.get("clip_score", 0),
-                "gemini": entry.get("gemini_score", 0),
-                "combined": entry.get("combined_score", 0)
-            }
-    
-    # Now print a table for each website
-    for website_name, sections in website_scores.items():
-        print(f"\n--- {website_name} Scores ---")
-        
-        table = PrettyTable()
-        table.field_names = ["Section", "CLIP Score", "Gemini Score", "Combined Score"]
-        
-        for section in ["header", "main", "footer", "full"]:
-            if section in sections:
-                scores = sections[section]
-                table.add_row([
-                    section.upper(),
-                    f"{scores['clip']:.3f}",
-                    f"{scores['gemini']:.3f}",
-                    f"{scores['combined']:.3f}"
-                ])
-        
-        print(table)
-    
-    # Also print a comparison table
-    print("\n--- Website Comparison (Combined Scores) ---")
-    comparison_table = PrettyTable()
-    comparison_table.field_names = ["Website", "Header", "Main", "Footer", "Overall"]
-    
-    for website_name, sections in website_scores.items():
-        row = [website_name]
-        for section in ["header", "main", "footer", "full"]:
-            if section in sections:
-                row.append(f"{sections[section]['combined']:.3f}")
-            else:
-                row.append("N/A")
-        
-        comparison_table.add_row(row)
-    
-    print(comparison_table)
-
-# --- Compare websites with combined CLIP and Gemini ---
+# --- Compare websites with only Gemini ---
 def compare_websites_combined(websites, category):
     """
-    Compare websites using both CLIP and Gemini, combining the scores.
+    Compare websites using only Gemini scoring.
     
     Args:
         websites: List of dictionaries with website name and URL
         category: Website category
         
     Returns:
-        Dictionary with combined scores for each section
+        Dictionary with Gemini scores for each section
     """
-    website_data = []
-    
-    # Capture screenshots
-    with sync_playwright() as p:
-        browser = p.firefox.launch(headless=True)
-        context = browser.new_context(viewport={"width": 1280, "height": 3000})
-
-        for site in websites:
-            name, url = site['name'], site['url']
-            page = context.new_page()
-            sections = capture_sections_and_fullpage(page, url, name)
-            page.close()
-
-            if sections:
-                website_data.append({
-                    "name": name,
-                    "url": url,
-                    "sections": sections
-                })
-        
-        browser.close()
-    
-    # Get CLIP scores
-    clip_scores = {"header": [], "main": [], "footer": [], "full": []}
-    
-    print("\n--- CLIP Scoring Results ---")
-    for site in website_data:
-        name = site["name"]
-        sections = site["sections"]
-        
-        for section_type in ["header", "main", "footer", "full"]:
-            image_path = sections.get(section_type)
-            cloudinary_url = sections.get(f"{section_type}_cloudinary_url")
-            
-            if image_path:
-                # Pass both the local path and Cloudinary URL (if available)
-                result = score_section(image_path, section_type, category, cloudinary_url=cloudinary_url)
-                print(f"{name} {section_type.upper()}: CLIP Score = {result['clip_score']:.3f}")
-                
-                # Create entry with both local path and Cloudinary URL
-                entry = {
-                    "name": name,
-                    "path": image_path,
-                    "score": result["clip_score"],
-                    "criteria": result["criteria_scores"]
-                }
-                
-                # Add Cloudinary URL if available
-                if cloudinary_url:
-                    entry["cloudinary_url"] = cloudinary_url
-                    
-                clip_scores[section_type].append(entry)
-    
-    # Get Gemini scores
-    print("\n--- Getting Gemini Scores ---")
-    gemini_scores = get_gemini_scores(website_data, category)
-    
-    # Print Gemini scores
-    print("\n--- Gemini Scoring Results ---")
-    for website_name, sections in gemini_scores.items():
-        for section_type, data in sections.items():
-            score = data.get("score", 0)
-            print(f"{website_name} {section_type.upper()}: Gemini Score = {score:.3f}")
-    
-    # Combine scores
-    print("\n--- Combined Scoring Results ---")
-    combined_scores = combine_scores(clip_scores, gemini_scores)
-    
-    # Print formatted tables
-    print_scores_table(combined_scores)
-    
-    return combined_scores
+    # Get scores from the main compare_websites function
+    return compare_websites(websites, category)
 
 # --- Compare websites (original method) ---
 def compare_websites(websites, category):
     """
-    Compare websites using both CLIP and Gemini scores.
+    Compare websites using only Gemini scores.
     
     Args:
         websites: List of dictionaries with website name and URL
         category: Website category
         
     Returns:
-        Dictionary with scores for each section, now incorporating both CLIP and Gemini
+        Dictionary with scores for each section using only Gemini
     """
     all_scores = {"header": [], "main": [], "footer": [], "full": []}
     website_data = []
@@ -663,34 +342,6 @@ def compare_websites(websites, category):
 
         browser.close()
     
-    # Calculate CLIP scores for each section
-    for site in website_data:
-        name = site["name"]
-        sections = site["sections"]
-
-        for section_type in ["header", "main", "footer", "full"]:
-            image_path = sections.get(section_type)
-            cloudinary_url = sections.get(f"{section_type}_cloudinary_url")
-            
-            if image_path:
-                # Pass both the local path and Cloudinary URL (if available)
-                result = score_section(image_path, section_type, category, cloudinary_url=cloudinary_url)
-                print(f"{name} {section_type}: CLIP Score = {result['clip_score']:.3f}")
-                
-                # Create entry with both local path and Cloudinary URL
-                entry = {
-                    "name": name,
-                    "path": image_path,
-                    "score": result["clip_score"],
-                    "criteria": result["criteria_scores"]
-                }
-                
-                # Add Cloudinary URL if available
-                if cloudinary_url:
-                    entry["cloudinary_url"] = cloudinary_url
-                    
-                all_scores[section_type].append(entry)
-
     # Now get Gemini scores for full-page analysis of sections
     print("\nGetting Gemini scores...")
     
@@ -698,12 +349,19 @@ def compare_websites(websites, category):
     gemini_input = []
     for site in website_data:
         full_path = site["sections"].get("full")
+        cloudinary_url = site["sections"].get("full_cloudinary_url")
+        
+        gemini_site = {
+            "name": site["name"],
+            "url": site["url"]
+        }
+        
+        if cloudinary_url:
+            gemini_site["full_cloudinary_url"] = cloudinary_url
         if full_path:
-            gemini_input.append({
-                "name": site["name"],
-                "url": site["url"],
-                "full_path": full_path
-            })
+            gemini_site["full_path"] = full_path
+            
+        gemini_input.append(gemini_site)
     
     # Call Gemini API to get vision improvements and section scores
     gemini_results = analyze_websites_with_gemini(gemini_input, category)
@@ -719,14 +377,10 @@ def compare_websites(websites, category):
     all_scores["websites"] = gemini_results.get("websites", [])
     all_scores["comparison"] = gemini_results.get("comparison", {})
     
-    # Get section scores from Gemini
-    gemini_scores = {}
-    
+    # Process Gemini scores for each section
     for name, website in gemini_website_data.items():
         sections = website.get("sections", {})
-        
-        if name not in gemini_scores:
-            gemini_scores[name] = {}
+        overall_score = website.get("overall_score", 0) / 10.0  # Convert to 0-1 scale
         
         # Map Gemini section names to our section types
         section_mapping = {
@@ -735,61 +389,74 @@ def compare_websites(websites, category):
             "footer": "footer"
         }
         
-        # Add overall score
-        gemini_scores[name]["full"] = {
-            "score": website.get("overall_score", 0) / 10.0,  # Convert to 0-1 scale
-            "details": website
-        }
+        # Find the paths from website_data
+        site_sections = None
+        for site in website_data:
+            if site["name"] == name:
+                site_sections = site["sections"]
+                break
         
-        # Add section scores
+        if not site_sections:
+            continue
+            
+        # Process full page score
+        full_path = site_sections.get("full")
+        full_cloudinary_url = site_sections.get("full_cloudinary_url")
+        
+        if full_path:
+            entry = {
+                "name": name,
+                "path": full_path,
+                "score": overall_score,
+                "gemini_score": overall_score,
+                "details": website,
+                "criteria": {
+                    "Clarity": overall_score,
+                    "Modernity": overall_score,
+                    "Relevance": overall_score,
+                    "Consistency": overall_score,
+                    "Visual Appeal": overall_score
+                }
+            }
+            
+            if full_cloudinary_url:
+                entry["cloudinary_url"] = full_cloudinary_url
+                
+            all_scores["full"].append(entry)
+            
+        # Process section scores
         for gemini_section, our_section in section_mapping.items():
             if gemini_section in sections:
                 section_data = sections[gemini_section]
-                gemini_scores[name][our_section] = {
-                    "score": section_data.get("score", 0) / 10.0,  # Convert to 0-1 scale
-                    "details": section_data
-                }
-    
-    # Combine CLIP and Gemini scores
-    print("\nCombining CLIP and Gemini scores...")
-    for section_type in ["header", "main", "footer", "full"]:
-        updated_entries = []
-        
-        for entry in all_scores[section_type]:
-            name = entry.get("name")
-            clip_score = entry.get("score", 0)
-            
-            # Get Gemini score if available
-            gemini_score = 0
-            if name in gemini_scores and section_type in gemini_scores[name]:
-                gemini_score = gemini_scores[name][section_type].get("score", 0)
-                # Extract gemini details
-                details = gemini_scores[name][section_type].get("details", {})
+                section_score = section_data.get("score", 0) / 10.0  # Convert to 0-1 scale
                 
-                # Add strengths and weaknesses to the entry if available
-                if section_type != "full" and details:
-                    strengths = details.get("strengths", [])
-                    weaknesses = details.get("weaknesses", [])
-                    recommendations = details.get("recommendations", [])
+                section_path = site_sections.get(our_section)
+                section_cloudinary_url = site_sections.get(f"{our_section}_cloudinary_url")
+                
+                if section_path:
+                    entry = {
+                        "name": name,
+                        "path": section_path,
+                        "score": section_score,
+                        "gemini_score": section_score,
+                        "criteria": {
+                            "Clarity": section_score,
+                            "Modernity": section_score,
+                            "Relevance": section_score,
+                            "Consistency": section_score,
+                            "Visual Appeal": section_score
+                        }
+                    }
                     
-                    entry["gemini_strengths"] = strengths
-                    entry["gemini_weaknesses"] = weaknesses
-                    entry["gemini_recommendations"] = recommendations
-            
-            # Calculate combined score
-            combined_score = (clip_score + gemini_score) / 2 if gemini_score > 0 else clip_score
-            
-            # Add Gemini and combined scores to the entry
-            entry["gemini_score"] = gemini_score
-            entry["combined_score"] = combined_score
-            entry["score"] = combined_score  # Replace original score with combined score
-            
-            print(f"{name} {section_type}: CLIP={clip_score:.3f}, Gemini={gemini_score:.3f}, Combined={combined_score:.3f}")
-            
-            updated_entries.append(entry)
-        
-        # Update the section scores
-        all_scores[section_type] = updated_entries
+                    # Add strengths and weaknesses
+                    entry["gemini_strengths"] = section_data.get("strengths", [])
+                    entry["gemini_weaknesses"] = section_data.get("weaknesses", [])
+                    entry["gemini_recommendations"] = section_data.get("recommendations", [])
+                    
+                    if section_cloudinary_url:
+                        entry["cloudinary_url"] = section_cloudinary_url
+                        
+                    all_scores[our_section].append(entry)
     
     # Print summary table
     print("\n=== FINAL SUMMARY ===")
@@ -802,7 +469,7 @@ def compare_websites(websites, category):
             name = entry.get("name")
             if name not in website_summaries:
                 website_summaries[name] = {}
-            website_summaries[name][section_type] = entry.get("combined_score", 0)
+            website_summaries[name][section_type] = entry.get("score", 0)
     
     for name, sections in website_summaries.items():
         header = sections.get("header", 0)
@@ -812,6 +479,17 @@ def compare_websites(websites, category):
         
         print(f"{name:<10} {header:<10.3f} {main:<10.3f} {footer:<10.3f} {overall:<10.3f}")
 
+    # Ensure the response structure is compatible with the frontend
+    all_scores = ensure_frontend_compatibility(all_scores)
+    
+    # Debug: Print the structure of the response
+    print("\nDEBUG - Response Structure:")
+    for section in all_scores.keys():
+        print(f"Section: {section}")
+        if isinstance(all_scores[section], list):
+            for item in all_scores[section]:
+                print(f"  - {item.get('name')}: {item.keys()}")
+    
     return all_scores
 
 # Example usage
