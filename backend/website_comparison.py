@@ -20,8 +20,25 @@ init_cloudinary()
 
 # Load CLIP model and processor
 device = "cuda" if torch.cuda.is_available() else "cpu"
-clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
-clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
+# clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+# clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
+# clip_model.eval()
+MODEL_DIR = Path("models/clip-vit-base-patch32")
+MODEL_NAME = "openai/clip-vit-base-patch32"
+if not MODEL_DIR.exists():
+    print("⬇️ Downloading CLIP model...")
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    clip_processor = CLIPProcessor.from_pretrained(MODEL_NAME)
+    clip_processor.save_pretrained(MODEL_DIR)
+    clip_model = CLIPModel.from_pretrained(MODEL_NAME)
+    clip_model.save_pretrained(MODEL_DIR)
+    print("✅ Model saved to disk.")
+else:
+    print("✅ Loading CLIP model from disk.")
+    clip_processor = CLIPProcessor.from_pretrained(MODEL_DIR)
+    clip_model = CLIPModel.from_pretrained(MODEL_DIR)
+
+clip_model.to(device)
 clip_model.eval()
 
 # --- Section-specific scoring prompts ---
