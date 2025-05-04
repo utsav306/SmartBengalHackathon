@@ -15,6 +15,8 @@ CORS(app)  # Enable CORS for all routes
 # Initialize Cloudinary
 init_cloudinary()
 
+port=5000
+
 # --- Flask API endpoint ---
 @app.route('/compare_websites', methods=['POST'])
 def compare_websites_api():
@@ -78,4 +80,4 @@ def serve_screenshots(path):
 
 # Run the Flask app
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=port, debug=True)
