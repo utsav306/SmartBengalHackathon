@@ -4,6 +4,8 @@ from flask_cors import CORS
 import os
 from dotenv import load_dotenv
 from cloudinary_storage import init_cloudinary, get_image_url
+import asyncio
+from playwright.async_api import async_playwright
 
 # Load environment variables from .env file
 load_dotenv()
@@ -16,6 +18,30 @@ CORS(app)  # Enable CORS for all routes
 init_cloudinary()
 
 port = int(os.environ.get("PORT", 5000))
+
+
+# Install Playwright browsers at runtime
+async def install_browsers():
+    try:
+        async with async_playwright() as p:
+            print("Installing Chromium...")
+            browser = await p.chromium.launch(headless=True)
+            await browser.close()
+
+            print("Installing Firefox...")
+            browser = await p.firefox.launch(headless=True)
+            await browser.close()
+
+            print("Installing WebKit...")
+            browser = await p.webkit.launch(headless=True)
+            await browser.close()
+
+            print("All Playwright browsers installed successfully.")
+    except Exception as e:
+        print(f"Error installing browsers: {str(e)}")
+
+# Run browser install once on startup
+asyncio.run(install_browsers())
 
 
 # --- Flask API endpoint ---
@@ -45,6 +71,7 @@ def compare_websites_api():
         # Log error for debugging
         print(f"Error processing request: {str(e)}")
         return jsonify({"error": f"Server error: {str(e)}"}), 500
+
 
 # Route to serve screenshot files - will redirect to Cloudinary if available
 @app.route('/screenshots/<path:path>')
@@ -79,6 +106,7 @@ def serve_screenshots(path):
         print(f"Error in serving screenshot: {str(e)}")
         return jsonify({"error": "Error serving screenshot"}), 500
 
-# Run the Flask app
+
+# Run the Flask app with Gunicorn on Render
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=port)
