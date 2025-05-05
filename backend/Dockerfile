@@ -1,30 +1,48 @@
 # Use Python slim image for smaller size
 FROM python:3.10-slim
 
-# Set the working directory in the container
 WORKDIR /app
 
-# Install system dependencies for Playwright and others
+# Install system dependencies for Playwright, OpenCV, and others
 RUN apt-get update && apt-get install -y \
+    libnss3 \
+    libnspr4 \
+    libdbus-1-3 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxrandr2 \
+    libxkbcommon0 \
+    libpango-1.0-0 \
+    libcairo2 \
+    libasound2 \
+    libatspi2.0-0 \
     libx11-xcb1 \
     libgdk-pixbuf2.0-0 \
     libgbm-dev \
+    wget \
     curl \
-    && rm -rf /var/lib/apt/lists/*
+    fonts-liberation \
+    libappindicator3-1 \
+    xdg-utils \
+    libgl1 \
+    --no-install-recommends && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright and the required browsers
+# Install Playwright
 RUN python -m playwright install
 
-
-# Copy the rest of the application code into the container
+# Copy code
 COPY . .
 
-# Expose the port your app will run on
 EXPOSE 5000
 
-# Command to run your Python app
 CMD ["python", "app.py"]
