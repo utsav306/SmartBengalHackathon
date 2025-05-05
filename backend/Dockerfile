@@ -19,8 +19,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Install Playwright and the required browsers
 RUN python -m playwright install
 
-# Create model directory (will be mounted as volume)
-RUN mkdir -p /app/models
 
 # Copy the rest of the application code into the container
 COPY . .

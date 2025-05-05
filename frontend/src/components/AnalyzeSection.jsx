@@ -52,7 +52,7 @@ const AnalyzeSection = () => {
     }
     
     try {
-      const response = await fetch('http://localhost:5000/compare_websites', {
+      const response = await fetch('https://smartbengalhackathon-o4pt.onrender.com/compare_websites', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

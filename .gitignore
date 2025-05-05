@@ -2,3 +2,7 @@ venv/
 frontend/node_modules
 backend/screenshots
 backend/__pycache__
+backend/.env/
+backend/.env.example
+backend/.env.local
+backend/.env.*
