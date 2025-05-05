@@ -10,19 +10,15 @@ load_dotenv()
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
+
+# Allow CORS from any origin
+CORS(app, resources={r"/*": {"origins": "*"}})  # Allow all origins
 
 # Initialize Cloudinary
 init_cloudinary()
 
 port = int(os.environ.get("PORT", 5000))
 
-# --- Add the root route ---
-@app.route('/')
-def home():
-    return 'Backend is running', 200
-
-# --- Flask API endpoint ---
 @app.route('/compare_websites', methods=['POST'])
 def compare_websites_api():
     try:
@@ -50,18 +46,16 @@ def compare_websites_api():
         print(f"Error processing request: {str(e)}")
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
-# Route to serve screenshot files - will redirect to Cloudinary if available
 @app.route('/screenshots/<path:path>')
 def serve_screenshots(path):
     try:
-        # Parse the path to extract website name and filename
         parts = path.split('/')
         if len(parts) >= 2:
             website_name = parts[0]
             filename = parts[1]
             
             # Try to get Cloudinary URL
-            public_id = filename.split('.')[0]  # Remove file extension
+            public_id = filename.split('.')[0]
             cloudinary_folder = f"website_screenshots/{website_name}"
             cloudinary_url = get_image_url(public_id, folder=cloudinary_folder)
             
