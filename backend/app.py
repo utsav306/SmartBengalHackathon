@@ -4,8 +4,8 @@ from flask_cors import CORS
 import os
 from dotenv import load_dotenv
 from cloudinary_storage import init_cloudinary, get_image_url
-import asyncio
-from playwright.async_api import async_playwright
+import subprocess
+import sys
 
 # Load environment variables from .env file
 load_dotenv()
@@ -21,39 +21,26 @@ port = int(os.environ.get("PORT", 5000))
 
 
 # Install Playwright browsers at runtime
-async def install_browsers():
+def install_playwright_browsers():
     try:
-        async with async_playwright() as p:
-            print("Installing Chromium...")
-            browser = await p.chromium.launch(headless=True)
-            await browser.close()
+        print("Installing Playwright browsers...")
+        subprocess.run([sys.executable, "-m", "playwright", "install", "--with-deps"], check=True)
+        print("✅ Browsers installed successfully.")
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Failed to install browsers: {e}")
 
-            print("Installing Firefox...")
-            browser = await p.firefox.launch(headless=True)
-            await browser.close()
-
-            print("Installing WebKit...")
-            browser = await p.webkit.launch(headless=True)
-            await browser.close()
-
-            print("All Playwright browsers installed successfully.")
-    except Exception as e:
-        print(f"Error installing browsers: {str(e)}")
-
-# Run browser install once on startup
-asyncio.run(install_browsers())
+# Run this once on startup
+install_playwright_browsers()
 
 
 # --- Flask API endpoint ---
 @app.route('/compare_websites', methods=['POST'])
 def compare_websites_api():
     try:
-        # Get JSON data from request
         data = request.get_json()
         if not data:
             return jsonify({"error": "No data provided"}), 400
 
-        # Extract websites and category from the input data
         websites = data.get('websites', [])
         category = data.get('category', 'ecommerce')
 
@@ -63,42 +50,35 @@ def compare_websites_api():
         print(f"Received data: {data}")
         print(f"Category: {category}")
 
-        # Call the compare_websites function and get the scores
         scores = compare_websites(websites, category)
         return jsonify(scores), 200
 
     except Exception as e:
-        # Log error for debugging
         print(f"Error processing request: {str(e)}")
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-# Route to serve screenshot files - will redirect to Cloudinary if available
 @app.route('/screenshots/<path:path>')
 def serve_screenshots(path):
     try:
-        # Parse the path to extract website name and filename
         parts = path.split('/')
         if len(parts) >= 2:
             website_name = parts[0]
             filename = parts[1]
-            
-            # Try to get Cloudinary URL
-            public_id = filename.split('.')[0]  # Remove file extension
+
+            public_id = filename.split('.')[0]
             cloudinary_folder = f"website_screenshots/{website_name}"
             cloudinary_url = get_image_url(public_id, folder=cloudinary_folder)
-            
+
             if cloudinary_url:
                 print(f"Redirecting to Cloudinary URL: {cloudinary_url}")
                 return redirect(cloudinary_url)
 
-        # Fallback to local file if Cloudinary URL not available
         local_path = os.path.join('screenshots', path)
         if os.path.exists(local_path):
             print(f"Serving local file: {path}")
             return send_from_directory('screenshots', path)
-        
-        # If file not found locally, return a 404 error
+
         print(f"Screenshot not found for {path}")
         abort(404, description="Screenshot not found.")
 
@@ -107,6 +87,5 @@ def serve_screenshots(path):
         return jsonify({"error": "Error serving screenshot"}), 500
 
 
-# Run the Flask app with Gunicorn on Render
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=port)
