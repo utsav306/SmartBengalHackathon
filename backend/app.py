@@ -4,8 +4,6 @@ from flask_cors import CORS
 import os
 from dotenv import load_dotenv
 from cloudinary_storage import init_cloudinary, get_image_url
-import subprocess
-import sys
 
 # Load environment variables from .env file
 load_dotenv()
@@ -18,20 +16,6 @@ CORS(app)  # Enable CORS for all routes
 init_cloudinary()
 
 port = int(os.environ.get("PORT", 5000))
-
-
-# Install Playwright browsers at runtime
-def install_playwright_browsers():
-    try:
-        print("Installing Playwright browsers...")
-        subprocess.run([sys.executable, "-m", "playwright", "install", "--with-deps"], check=True)
-        print("✅ Browsers installed successfully.")
-    except subprocess.CalledProcessError as e:
-        print(f"❌ Failed to install browsers: {e}")
-
-# Run this once on startup
-install_playwright_browsers()
-
 
 # --- Flask API endpoint ---
 @app.route('/compare_websites', methods=['POST'])
